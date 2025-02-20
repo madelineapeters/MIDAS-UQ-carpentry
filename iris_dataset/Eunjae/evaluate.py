@@ -1,6 +1,9 @@
 from dataloader import *
+import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import accuracy_score
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
 
@@ -57,10 +60,14 @@ class ClassifierUQEvaluator :
 
     @staticmethod
     def neg_log_likelihood(y_true, y_proba):
+        """ Negative log likelihood. Evaluates the quality of model uncertainty on a held out set.
+        Lower the better; perfect models will get scores of 0."""
         return np.mean(-1 * np.log(np.array([y_proba[i, y] for i, y in enumerate(y_true)])))
     
     @staticmethod
     def brier_score(y_true, y_proba):
+        """ Measures the accuracy of predicted probabilities.
+        Lower the better; perfect models will get scores of 0."""
         if y_proba.shape[1] == 2 : # binary classification
             pass
         elif y_proba.shape[1] > 2 : # multiclass classification
@@ -70,7 +77,9 @@ class ClassifierUQEvaluator :
         
     @staticmethod
     def expected_calibration_error(y_true, y_proba, bins=np.arange(0, 1.1, 0.2)):
-        """ Computes the expected calibration_error.
+        """ Computes the expected calibration_error which measures the correspondence between predicted probabilities
+        and emperical accuracy.
+        Simply put, it is the gap between the accuracy within a bin and its predicted probability.
         
         Parameters
         ----------
@@ -84,9 +93,10 @@ class ClassifierUQEvaluator :
         ece = 0
         for bin_num in np.unique(binned) :
             incidents_of_interest = np.where(binned == bin_num)
-            acc = np.sum(pred_class[incidents_of_interest] == y_true[incidents_of_interest])
-            rep_proba = np.sum(pred_class[incidents_of_interest])
-            ece += (acc - rep_proba) / len(y_true)
+            if np.any(incidents_of_interest):
+                acc = np.sum(pred_class[incidents_of_interest] == y_true[incidents_of_interest])
+                rep_proba = np.sum(max_proba[incidents_of_interest])
+                ece += np.abs((acc - rep_proba)) / len(y_true)
         return ece
     
     def evaluate(self, *args) :
@@ -102,17 +112,26 @@ class ClassifierUQEvaluator :
         None
         """
         for model in args :
+            # TODO: incorporate validation set for hyperparameter optimization
             model.fit(self.X_train, self.y_train)
             y_proba = model.predict_proba(self.X_test)
+            y_pred = model.predict(self.X_test)
+            acc = accuracy_score(self.y_test, y_pred)
+            print("Accuracy:", round(acc, 3))
             nll = self.neg_log_likelihood(self.y_test, y_proba)
             brier = self.brier_score(self.y_test, y_proba)
             ece = self.expected_calibration_error(self.y_test, y_proba)
             print(nll, brier, ece)
+            print()
+            fig, ax = plt.subplots()
+            plt.hist(y_proba[:, 2], bins=np.arange(0, 1.1, 0.2), rwidth=0.95)
+            plt.show()
 
 
 if __name__ == "__main__" :
     iris_uq = ClassifierUQEvaluator()
     # Comparing different kernels
     iris_uq.evaluate(
-        GaussianProcessClassifier(1.0*RBF(1.0), random_state=42, n_jobs=-1),
+        GaussianProcessClassifier(3.0*RBF(1.0), random_state=42, n_jobs=-1),
+        RandomForestClassifier(random_state=42)
     )
