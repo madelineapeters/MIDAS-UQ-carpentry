@@ -1,11 +1,13 @@
 from dataloader import *
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.metrics import accuracy_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
+from sklearn.svm import SVC
+import time
 
 class ClassifierUQEvaluator :
     """ Evaluator object for the iris dataset. 
@@ -56,13 +58,17 @@ class ClassifierUQEvaluator :
         elif self.val_portion == 0 :
             X_train, y_train = X_train_val, y_train_val
             X_val, y_val = None, None
+        std = StandardScaler()
+        X_train = std.fit_transform(X_train)
+        X_val = std.transform(X_val)
+        X_test = std.transform(X_test)
         return X_train, y_train, X_val, y_val, X_test, y_test
 
     @staticmethod
     def neg_log_likelihood(y_true, y_proba):
         """ Negative log likelihood. Evaluates the quality of model uncertainty on a held out set.
         Lower the better; perfect models will get scores of 0."""
-        return np.mean(-1 * np.log(np.array([y_proba[i, y] for i, y in enumerate(y_true)])))
+        return np.mean(-1 * np.log(1e-6+np.array([y_proba[i, y] for i, y in enumerate(y_true)])))
     
     @staticmethod
     def brier_score(y_true, y_proba):
@@ -113,7 +119,12 @@ class ClassifierUQEvaluator :
         """
         for model in args :
             # TODO: incorporate validation set for hyperparameter optimization
+            tick = time.time()
             model.fit(self.X_train, self.y_train)
+            tock = time.time()
+            print(f"Took {round(tock-tick, 3)} seconds to train model.")
+            if self.val_portion > 0 :
+                print("Validation accuracy", accuracy_score(self.y_val, model.predict(self.X_val)))
             y_proba = model.predict_proba(self.X_test)
             y_pred = model.predict(self.X_test)
             acc = accuracy_score(self.y_test, y_pred)
@@ -124,14 +135,28 @@ class ClassifierUQEvaluator :
             print(nll, brier, ece)
             print()
             fig, ax = plt.subplots()
-            plt.hist(y_proba[:, 2], bins=np.arange(0, 1.1, 0.2), rwidth=0.95)
+            plt.hist(y_proba[:, 1], bins=np.arange(0, 1.1, 0.2), rwidth=0.95)
             plt.show()
 
 
 if __name__ == "__main__" :
-    iris_uq = ClassifierUQEvaluator()
+    iris_uq = ClassifierUQEvaluator(data=StudentDataset())
     # Comparing different kernels
     iris_uq.evaluate(
         GaussianProcessClassifier(3.0*RBF(1.0), random_state=42, n_jobs=-1),
-        RandomForestClassifier(random_state=42)
+        GridSearchCV(
+            RandomForestClassifier(random_state=42),
+            param_grid={
+                "n_estimators":[10, 25, 50],
+                "max_depth":[2, 3, 5, None]
+            },
+            n_jobs=-1
+        ),
+        GridSearchCV(
+            SVC(probability=True, random_state=42),
+            param_grid = {
+                "C":[0.1, 0.3, 1, 3, 10],
+                "kernel":["rbf", "sigmoid"]
+            }
+        )
     )
